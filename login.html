@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TAF PUNK — Connexion</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="wrap">
+  <h1>TAF PUNK</h1>
+  <p class="dim">Connecte-toi pour remplir ta playlist et rejoindre une partie.</p>
+
+  <div class="card">
+    <input type="email" id="email" placeholder="Ton email">
+    <input type="password" id="password" placeholder="Mot de passe">
+    <div id="msg"></div>
+    <button id="loginBtn">Se connecter</button>
+    <button id="signupBtn" class="secondary" style="margin-top:10px;">Créer un compte</button>
+  </div>
+</div>
+
+<script type="module">
+  import { supabase } from './supabase-client.js';
+
+  const msg = document.getElementById('msg');
+  const emailInput = document.getElementById('email');
+  const passwordInput = document.getElementById('password');
+
+  function showMessage(text, isError = true) {
+    msg.textContent = text;
+    msg.className = isError ? 'error' : 'success';
+  }
+
+  document.getElementById('loginBtn').addEventListener('click', async () => {
+    const { error } = await supabase.auth.signInWithPassword({
+      email: emailInput.value,
+      password: passwordInput.value,
+    });
+    if (error) return showMessage(error.message);
+    window.location.href = 'playlist.html';
+  });
+
+  document.getElementById('signupBtn').addEventListener('click', async () => {
+    const { error } = await supabase.auth.signUp({
+      email: emailInput.value,
+      password: passwordInput.value,
+    });
+    if (error) return showMessage(error.message);
+    showMessage('Compte créé ! Tu peux maintenant te connecter.', false);
+  });
+
+  // Si déjà connecté, redirection directe
+  supabase.auth.getUser().then(({ data }) => {
+    if (data?.user) window.location.href = 'playlist.html';
+  });
+</script>
+</body>
+</html>

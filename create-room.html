@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TAF PUNK — Nouvelle partie</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="wrap" style="text-align:center;">
+  <h1>Nouvelle partie</h1>
+  <p class="dim">Un code sera généré. Partage-le à ton équipe pour qu'elle rejoigne depuis son téléphone.</p>
+  <div id="msg"></div>
+  <button id="createBtn">Créer la partie</button>
+</div>
+
+<script type="module">
+  import { supabase } from './supabase-client.js';
+
+  const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // sans 0/O/1/I
+  function generateCode(length = 6) {
+    let code = '';
+    for (let i = 0; i < length; i++) {
+      code += CODE_CHARS[Math.floor(Math.random() * CODE_CHARS.length)];
+    }
+    return code;
+  }
+
+  const msg = document.getElementById('msg');
+  const btn = document.getElementById('createBtn');
+
+  btn.addEventListener('click', async () => {
+    btn.disabled = true;
+    btn.textContent = 'Création…';
+    msg.textContent = '';
+
+    const { data: userData, error: userError } = await supabase.auth.getUser();
+    if (userError || !userData?.user) {
+      msg.className = 'error';
+      msg.textContent = 'Connecte-toi d\'abord.';
+      window.location.href = 'login.html';
+      return;
+    }
+
+    let created = false;
+    for (let attempt = 0; attempt < 5 && !created; attempt++) {
+      const code = generateCode();
+      const { error } = await supabase.from('rooms').insert({ code, host_id: userData.user.id });
+      if (!error) {
+        window.location.href = `salon.html?code=${code}`;
+        created = true;
+      } else if (error.code !== '23505') {
+        msg.className = 'error';
+        msg.textContent = 'Impossible de créer la partie. Réessaie.';
+        break;
+      }
+    }
+
+    btn.disabled = false;
+    btn.textContent = 'Créer la partie';
+  });
+</script>
+</body>
+</html>

@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TAF PUNK — Ta playlist</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="wrap">
+  <h1>Ta playlist</h1>
+  <p class="dim">Une chanson par catégorie. Modifiable à tout moment — elle rejoint automatiquement chaque partie que tu rejoins.</p>
+  <div id="list"></div>
+</div>
+
+<script type="module">
+  import { supabase } from './supabase-client.js';
+  import { extractYoutubeId, fetchYoutubeMetadata } from './youtube.js';
+
+  const list = document.getElementById('list');
+  let userId = null;
+
+  async function init() {
+    const { data: userData } = await supabase.auth.getUser();
+    if (!userData?.user) {
+      window.location.href = 'login.html';
+      return;
+    }
+    userId = userData.user.id;
+
+    const { data: categories } = await supabase.from('categories').select('*').order('id');
+    const { data: submissions } = await supabase.from('submissions').select('*').eq('user_id', userId);
+
+    (categories || []).forEach((cat) => {
+      const existing = (submissions || []).find((s) => s.category_id === cat.id);
+      renderCategoryCard(cat, existing);
+    });
+  }
+
+  function renderCategoryCard(cat, existing) {
+    const card = document.createElement('div');
+    card.className = 'card';
+    card.innerHTML = `
+      <div class="cat-label">${cat.label}</div>
+      <p class="dim" style="margin-top:0;">${cat.description || ''}</p>
+      <input type="text" class="url-input" placeholder="Colle ton lien YouTube ici" value="${existing ? existing.youtube_url : ''}">
+      <div class="status"></div>
+      <div class="preview-zone"></div>
+      <button class="save-btn" style="display:none;">Enregistrer</button>
+    `;
+    list.appendChild(card);
+
+    const input = card.querySelector('.url-input');
+    const status = card.querySelector('.status');
+    const previewZone = card.querySelector('.preview-zone');
+    const saveBtn = card.querySelector('.save-btn');
+
+    let currentMeta = existing
+      ? { videoId: existing.youtube_video_id, title: existing.title }
+      : null;
+
+    if (existing) {
+      status.innerHTML = '<span class="success">✓ Enregistré</span>';
+    }
+
+    let debounceTimer;
+    input.addEventListener('input', () => {
+      clearTimeout(debounceTimer);
+      const url = input.value.trim();
+      saveBtn.style.display = 'none';
+      previewZone.innerHTML = '';
+      status.textContent = '';
+
+      if (!url) return;
+
+      debounceTimer = setTimeout(async () => {
+        const videoId = extractYoutubeId(url);
+        if (!videoId) {
+          status.innerHTML = '<span class="error">Lien YouTube invalide.</span>';
+          return;
+        }
+        status.textContent = 'Vérification…';
+        try {
+          const meta = await fetchYoutubeMetadata(url);
+          currentMeta = { videoId, title: meta.title, url };
+          status.textContent = '';
+          previewZone.innerHTML = `
+            <div class="preview">
+              <img src="${meta.thumbnail}" alt="">
+              <span>${meta.title}</span>
+            </div>`;
+          saveBtn.style.display = 'block';
+        } catch {
+          status.innerHTML = '<span class="error">Lien YouTube invalide.</span>';
+        }
+      }, 500);
+    });
+
+    saveBtn.addEventListener('click', async () => {
+      if (!currentMeta) return;
+      saveBtn.disabled = true;
+      saveBtn.textContent = 'Enregistrement…';
+
+      const { error } = await supabase.from('submissions').upsert(
+        {
+          user_id: userId,
+          category_id: cat.id,
+          youtube_url: currentMeta.url,
+          youtube_video_id: currentMeta.videoId,
+          title: currentMeta.title,
+        },
+        { onConflict: 'user_id,category_id' }
+      );
+
+      saveBtn.disabled = false;
+      saveBtn.textContent = 'Enregistrer';
+      if (error) {
+        status.innerHTML = '<span class="error">Erreur, réessaie.</span>';
+      } else {
+        status.innerHTML = '<span class="success">✓ Enregistré</span>';
+        saveBtn.style.display = 'none';
+      }
+    });
+  }
+
+  init();
+</script>
+</body>
+</html>
