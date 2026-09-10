@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TAF PUNK — Salle d'attente</title>
+<link rel="stylesheet" href="style.css">
+<style>
+  .code-display {
+    font-size: 40px;
+    font-weight: 800;
+    letter-spacing: 6px;
+    text-align: center;
+    color: #FFB238;
+    margin: 12px 0 24px;
+  }
+  .member-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 0;
+    border-bottom: 1px solid #282C55;
+  }
+  .member-row:last-child { border-bottom: none; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: #34C7A8; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <p class="dim" style="text-align:center;">Code de la partie</p>
+  <div class="code-display" id="codeDisplay">------</div>
+
+  <div class="card">
+    <p class="dim" style="margin-top:0;">Joueurs connectés : <b id="count">0</b></p>
+    <div id="members"></div>
+  </div>
+
+  <div id="hostActions" style="display:none;">
+    <button id="startBtn">Démarrer la partie</button>
+  </div>
+  <p id="waitMsg" class="dim" style="text-align:center; display:none;">En attente que l'hôte démarre la partie…</p>
+  <div id="msg"></div>
+</div>
+
+<script type="module">
+  import { supabase } from './supabase-client.js';
+
+  const code = new URLSearchParams(window.location.search).get('code');
+  const codeDisplay = document.getElementById('codeDisplay');
+  const membersEl = document.getElementById('members');
+  const countEl = document.getElementById('count');
+  const hostActions = document.getElementById('hostActions');
+  const waitMsg = document.getElementById('waitMsg');
+  const msg = document.getElementById('msg');
+
+  if (!code) {
+    window.location.href = 'create-room.html';
+  }
+  codeDisplay.textContent = code;
+
+  let userId = null;
+  let isHost = false;
+
+  async function init() {
+    const { data: userData } = await supabase.auth.getUser();
+    if (!userData?.user) {
+      window.location.href = 'login.html';
+      return;
+    }
+    userId = userData.user.id;
+
+    const { data: room, error: roomError } = await supabase
+      .from('rooms')
+      .select('host_id, status')
+      .eq('code', code)
+      .maybeSingle();
+
+    if (roomError || !room) {
+      msg.className = 'error';
+      msg.textContent = 'Partie introuvable.';
+      return;
+    }
+
+    isHost = room.host_id === userId;
+    hostActions.style.display = isHost ? 'block' : 'none';
+    waitMsg.style.display = isHost ? 'none' : 'block';
+
+    await loadMembers();
+    subscribeRealtime();
+  }
+
+  async function loadMembers() {
+    const { data: members } = await supabase
+      .from('room_members')
+      .select('user_id, profiles(username)')
+      .eq('room_code', code)
+      .order('joined_at');
+
+    membersEl.innerHTML = '';
+    (members || []).forEach((m) => {
+      const row = document.createElement('div');
+      row.className = 'member-row';
+      row.innerHTML = `<span class="dot"></span> ${m.profiles?.username || 'Joueur'}`;
+      membersEl.appendChild(row);
+    });
+    countEl.textContent = (members || []).length;
+  }
+
+  function subscribeRealtime() {
+    supabase
+      .channel(`room-${code}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'room_members', filter: `room_code=eq.${code}` },
+        () => loadMembers()
+      )
+      .subscribe();
+  }
+
+  document.getElementById('startBtn').addEventListener('click', async () => {
+    const { error } = await supabase
+      .from('rooms')
+      .update({ status: 'IN_PROGRESS' })
+      .eq('code', code);
+
+    if (error) {
+      msg.className = 'error';
+      msg.textContent = 'Impossible de démarrer la partie.';
+      return;
+    }
+    // La génération des manches et l'écran de jeu sont la prochaine étape
+    msg.className = 'success';
+    msg.textContent = 'Partie démarrée ! (écran de jeu à venir)';
+  });
+
+  init();
+</script>
+</body>
+</html>

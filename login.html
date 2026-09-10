@@ -9,11 +9,11 @@
 <body>
 <div class="wrap">
   <h1>TAF PUNK</h1>
-  <p class="dim">Connecte-toi pour remplir ta playlist et rejoindre une partie.</p>
+  <p class="dim">Connecte-toi avec un pseudo et un mot de passe.</p>
 
   <div class="card">
-    <input type="email" id="email" placeholder="Ton email">
-    <input type="password" id="password" placeholder="Mot de passe">
+    <input type="text" id="username" placeholder="Ton pseudo" autocomplete="username">
+    <input type="password" id="password" placeholder="Mot de passe" autocomplete="current-password">
     <div id="msg"></div>
     <button id="loginBtn">Se connecter</button>
     <button id="signupBtn" class="secondary" style="margin-top:10px;">Créer un compte</button>
@@ -24,7 +24,7 @@
   import { supabase } from './supabase-client.js';
 
   const msg = document.getElementById('msg');
-  const emailInput = document.getElementById('email');
+  const usernameInput = document.getElementById('username');
   const passwordInput = document.getElementById('password');
 
   function showMessage(text, isError = true) {
@@ -32,22 +32,57 @@
     msg.className = isError ? 'error' : 'success';
   }
 
+  // Supabase Auth exige un email. On en génère un "technique",
+  // invisible pour l'utilisateur, à partir du pseudo normalisé.
+  // Le pseudo affiché (avec sa casse d'origine) est stocké séparément
+  // dans profiles.username par le trigger handle_new_user.
+  function usernameToEmail(username) {
+    const slug = username
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9_]/g, '');
+    return `${slug}@tafpunk.local`;
+  }
+
+  function validateUsername(username) {
+    return /^[a-zA-Z0-9_\-\s]{3,20}$/.test(username.trim());
+  }
+
   document.getElementById('loginBtn').addEventListener('click', async () => {
+    const username = usernameInput.value;
+    if (!validateUsername(username)) {
+      return showMessage('Pseudo invalide (3 à 20 caractères).');
+    }
     const { error } = await supabase.auth.signInWithPassword({
-      email: emailInput.value,
+      email: usernameToEmail(username),
       password: passwordInput.value,
     });
-    if (error) return showMessage(error.message);
+    if (error) return showMessage('Pseudo ou mot de passe incorrect.');
     window.location.href = 'playlist.html';
   });
 
   document.getElementById('signupBtn').addEventListener('click', async () => {
+    const username = usernameInput.value;
+    if (!validateUsername(username)) {
+      return showMessage('Pseudo invalide (3 à 20 caractères, lettres/chiffres/espaces/tirets).');
+    }
+    if (passwordInput.value.length < 6) {
+      return showMessage('Le mot de passe doit faire au moins 6 caractères.');
+    }
+
     const { error } = await supabase.auth.signUp({
-      email: emailInput.value,
+      email: usernameToEmail(username),
       password: passwordInput.value,
+      options: { data: { username: username.trim() } },
     });
-    if (error) return showMessage(error.message);
-    showMessage('Compte créé ! Tu peux maintenant te connecter.', false);
+
+    if (error) {
+      if (error.message.toLowerCase().includes('already')) {
+        return showMessage('Ce pseudo est déjà pris.');
+      }
+      return showMessage(error.message);
+    }
+    window.location.href = 'playlist.html';
   });
 
   // Si déjà connecté, redirection directe

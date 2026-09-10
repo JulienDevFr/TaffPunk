@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TAF PUNK — Rejoindre</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="wrap" style="text-align:center;">
+  <h1>Rejoindre une partie</h1>
+  <p class="dim">Entre le code donné par l'hôte.</p>
+  <input type="text" id="codeInput" placeholder="EX: X7B9K2" style="text-align:center; text-transform:uppercase; font-size:20px; letter-spacing:3px;">
+  <div id="msg"></div>
+  <button id="joinBtn">Rejoindre</button>
+</div>
+
+<script type="module">
+  import { supabase } from './supabase-client.js';
+
+  const input = document.getElementById('codeInput');
+  const msg = document.getElementById('msg');
+  const btn = document.getElementById('joinBtn');
+
+  input.addEventListener('input', () => {
+    input.value = input.value.toUpperCase();
+  });
+
+  btn.addEventListener('click', async () => {
+    const code = input.value.trim();
+    if (!code) return;
+
+    btn.disabled = true;
+    btn.textContent = 'Vérification…';
+    msg.textContent = '';
+
+    const { data: userData, error: userError } = await supabase.auth.getUser();
+    if (userError || !userData?.user) {
+      window.location.href = 'login.html';
+      return;
+    }
+
+    const { data: room, error: roomError } = await supabase
+      .from('rooms')
+      .select('code, status')
+      .eq('code', code)
+      .maybeSingle();
+
+    if (roomError || !room) {
+      msg.className = 'error';
+      msg.textContent = 'Ce code ne correspond à aucune partie.';
+      btn.disabled = false;
+      btn.textContent = 'Rejoindre';
+      return;
+    }
+
+    if (room.status !== 'WAITING') {
+      msg.className = 'error';
+      msg.textContent = 'Cette partie a déjà commencé ou est terminée.';
+      btn.disabled = false;
+      btn.textContent = 'Rejoindre';
+      return;
+    }
+
+    const { error: joinError } = await supabase
+      .from('room_members')
+      .insert({ room_code: code, user_id: userData.user.id });
+
+    // 23505 = déjà membre de ce salon, ce n'est pas une erreur bloquante
+    if (joinError && joinError.code !== '23505') {
+      msg.className = 'error';
+      msg.textContent = 'Impossible de rejoindre la partie.';
+      btn.disabled = false;
+      btn.textContent = 'Rejoindre';
+      return;
+    }
+
+    window.location.href = `salon.html?code=${code}`;
+  });
+</script>
+</body>
+</html>
