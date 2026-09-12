@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TAF PUNK</title>
+<link rel="stylesheet" href="style.css">
+<style>
+  h2 { font-size: 18px; margin: 32px 0 4px; }
+  .row { display:flex; gap:10px; }
+  .row input { flex:1; }
+  .row button { width:auto; padding:0 18px; }
+</style>
+</head>
+<body>
+
+<!-- ========== SECTION CONNEXION ========== -->
+<div class="wrap" id="authSection">
+  <h1>TAF PUNK</h1>
+  <p class="dim">Connecte-toi avec un pseudo et un mot de passe.</p>
+  <div class="card">
+    <input type="text" id="username" placeholder="Ton pseudo" autocomplete="username">
+    <input type="password" id="password" placeholder="Mot de passe" autocomplete="current-password">
+    <div id="authMsg"></div>
+    <button id="loginBtn">Se connecter</button>
+    <button id="signupBtn" class="secondary" style="margin-top:10px;">Créer un compte</button>
+  </div>
+</div>
+
+<!-- ========== SECTION APPLICATION (connecté) ========== -->
+<div class="wrap" id="appSection" style="display:none;">
+  <div style="display:flex; justify-content:space-between; align-items:center;">
+    <h1 style="margin:0;">TAF PUNK</h1>
+    <button id="logoutBtn" class="secondary" style="width:auto; padding:8px 14px; font-size:12px;">Déconnexion</button>
+  </div>
+  <p class="dim">Connecté en tant que <b id="whoami"></b></p>
+
+  <h2>Ta playlist</h2>
+  <p class="dim">Une chanson par catégorie. Modifiable à tout moment — elle rejoint automatiquement chaque partie que tu rejoins.</p>
+  <div id="list"></div>
+
+  <h2>Créer une partie</h2>
+  <div class="card">
+    <p class="dim" style="margin-top:0;">Un code sera généré pour que ton équipe te rejoigne.</p>
+    <div id="createMsg"></div>
+    <button id="createRoomBtn">Créer la partie</button>
+  </div>
+
+  <h2>Rejoindre une partie</h2>
+  <div class="card">
+    <div class="row">
+      <input type="text" id="codeInput" placeholder="EX: X7B9K2" style="text-transform:uppercase;">
+      <button id="joinBtn" class="secondary">Rejoindre</button>
+    </div>
+    <div id="joinMsg"></div>
+  </div>
+</div>
+
+<script type="module">
+  import { supabase } from './supabase-client.js';
+  import { extractYoutubeId, fetchYoutubeMetadata } from './youtube.js';
+
+  const authSection = document.getElementById('authSection');
+  const appSection = document.getElementById('appSection');
+  const authMsg = document.getElementById('authMsg');
+  const usernameInput = document.getElementById('username');
+  const passwordInput = document.getElementById('password');
+
+  // ---------- Auth helpers ----------
+  function usernameToEmail(username) {
+    const slug = username.trim().toLowerCase().replace(/[^a-z0-9_]/g, '');
+    return `${slug}@tafpunk.local`;
+  }
+  function validateUsername(username) {
+    return /^[a-zA-Z0-9_\-\s]{3,20}$/.test(username.trim());
+  }
+  function showAuthMsg(text, isError = true) {
+    authMsg.textContent = text;
+    authMsg.className = isError ? 'error' : 'success';
+  }
+
+  document.getElementById('loginBtn').addEventListener('click', async () => {
+    const username = usernameInput.value;
+    if (!validateUsername(username)) return showAuthMsg('Pseudo invalide (3 à 20 caractères).');
+    const { error } = await supabase.auth.signInWithPassword({
+      email: usernameToEmail(username),
+      password: passwordInput.value,
+    });
+    if (error) return showAuthMsg('Pseudo ou mot de passe incorrect.');
+    boot();
+  });
+
+  document.getElementById('signupBtn').addEventListener('click', async () => {
+    const username = usernameInput.value;
+    if (!validateUsername(username)) return showAuthMsg('Pseudo invalide (3 à 20 caractères, lettres/chiffres/espaces/tirets).');
+    if (passwordInput.value.length < 6) return showAuthMsg('Le mot de passe doit faire au moins 6 caractères.');
+
+    const { error } = await supabase.auth.signUp({
+      email: usernameToEmail(username),
+      password: passwordInput.value,
+      options: { data: { username: username.trim() } },
+    });
+    if (error) {
+      if (error.message.toLowerCase().includes('already')) return showAuthMsg('Ce pseudo est déjà pris.');
+      return showAuthMsg(error.message);
+    }
+    boot();
+  });
+
+  document.getElementById('logoutBtn').addEventListener('click', async () => {
+    await supabase.auth.signOut();
+    window.location.reload();
+  });
+
+  // ---------- Boot : affiche la bonne section ----------
+  async function boot() {
+    const { data: userData } = await supabase.auth.getUser();
+    if (!userData?.user) {
+      authSection.style.display = 'block';
+      appSection.style.display = 'none';
+      return;
+    }
+    authSection.style.display = 'none';
+    appSection.style.display = 'block';
+
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('username')
+      .eq('id', userData.user.id)
+      .maybeSingle();
+    document.getElementById('whoami').textContent = profile?.username || '—';
+
+    loadPlaylist(userData.user.id);
+  }
+
+  // ---------- Playlist ----------
+  async function loadPlaylist(userId) {
+    const list = document.getElementById('list');
+    list.innerHTML = '';
+
+    const { data: categories } = await supabase.from('categories').select('*').order('id');
+    const { data: submissions } = await supabase.from('submissions').select('*').eq('user_id', userId);
+
+    (categories || []).forEach((cat) => {
+      const existing = (submissions || []).find((s) => s.category_id === cat.id);
+      renderCategoryCard(list, userId, cat, existing);
+    });
+  }
+
+  function renderCategoryCard(list, userId, cat, existing) {
+    const card = document.createElement('div');
+    card.className = 'card';
+    card.innerHTML = `
+      <div class="cat-label">${cat.label}</div>
+      <p class="dim" style="margin-top:0;">${cat.description || ''}</p>
+      <input type="text" class="url-input" placeholder="Colle ton lien YouTube ici" value="${existing ? existing.youtube_url : ''}">
+      <div class="status"></div>
+      <div class="preview-zone"></div>
+      <button class="save-btn" style="display:none;">Enregistrer</button>
+    `;
+    list.appendChild(card);
+
+    const input = card.querySelector('.url-input');
+    const status = card.querySelector('.status');
+    const previewZone = card.querySelector('.preview-zone');
+    const saveBtn = card.querySelector('.save-btn');
+
+    let currentMeta = existing ? { videoId: existing.youtube_video_id, title: existing.title, url: existing.youtube_url } : null;
+    if (existing) status.innerHTML = '<span class="success">✓ Enregistré</span>';
+
+    let debounceTimer;
+    input.addEventListener('input', () => {
+      clearTimeout(debounceTimer);
+      const url = input.value.trim();
+      saveBtn.style.display = 'none';
+      previewZone.innerHTML = '';
+      status.textContent = '';
+      if (!url) return;
+
+      debounceTimer = setTimeout(async () => {
+        const videoId = extractYoutubeId(url);
+        if (!videoId) {
+          status.innerHTML = '<span class="error">Lien YouTube invalide.</span>';
+          return;
+        }
+        status.textContent = 'Vérification…';
+        try {
+          const meta = await fetchYoutubeMetadata(url);
+          currentMeta = { videoId, title: meta.title, url };
+          status.textContent = '';
+          previewZone.innerHTML = `<div class="preview"><img src="${meta.thumbnail}" alt=""><span>${meta.title}</span></div>`;
+          saveBtn.style.display = 'block';
+        } catch {
+          status.innerHTML = '<span class="error">Lien YouTube invalide.</span>';
+        }
+      }, 500);
+    });
+
+    saveBtn.addEventListener('click', async () => {
+      if (!currentMeta) return;
+      saveBtn.disabled = true;
+      saveBtn.textContent = 'Enregistrement…';
+
+      const { error } = await supabase.from('submissions').upsert(
+        {
+          user_id: userId,
+          category_id: cat.id,
+          youtube_url: currentMeta.url,
+          youtube_video_id: currentMeta.videoId,
+          title: currentMeta.title,
+        },
+        { onConflict: 'user_id,category_id' }
+      );
+
+      saveBtn.disabled = false;
+      saveBtn.textContent = 'Enregistrer';
+      if (error) {
+        status.innerHTML = '<span class="error">Erreur, réessaie.</span>';
+      } else {
+        status.innerHTML = '<span class="success">✓ Enregistré</span>';
+        saveBtn.style.display = 'none';
+      }
+    });
+  }
+
+  // ---------- Créer une partie ----------
+  const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // sans 0/O/1/I
+  function generateCode(length = 6) {
+    let code = '';
+    for (let i = 0; i < length; i++) code += CODE_CHARS[Math.floor(Math.random() * CODE_CHARS.length)];
+    return code;
+  }
+
+  document.getElementById('createRoomBtn').addEventListener('click', async () => {
+    const btn = document.getElementById('createRoomBtn');
+    const createMsg = document.getElementById('createMsg');
+    btn.disabled = true;
+    btn.textContent = 'Création…';
+    createMsg.textContent = '';
+
+    const { data: userData } = await supabase.auth.getUser();
+    if (!userData?.user) return;
+
+    let created = false;
+    for (let attempt = 0; attempt < 5 && !created; attempt++) {
+      const code = generateCode();
+      const { error } = await supabase.from('rooms').insert({ code, host_id: userData.user.id });
+      if (!error) {
+        window.location.href = `salon.html?code=${code}`;
+        created = true;
+      } else if (error.code !== '23505') {
+        createMsg.className = 'error';
+        createMsg.textContent = 'Impossible de créer la partie. Réessaie.';
+        break;
+      }
+    }
+    btn.disabled = false;
+    btn.textContent = 'Créer la partie';
+  });
+
+  // ---------- Rejoindre une partie ----------
+  const codeInput = document.getElementById('codeInput');
+  codeInput.addEventListener('input', () => { codeInput.value = codeInput.value.toUpperCase(); });
+
+  document.getElementById('joinBtn').addEventListener('click', async () => {
+    const joinMsg = document.getElementById('joinMsg');
+    const code = codeInput.value.trim();
+    if (!code) return;
+
+    joinMsg.textContent = '';
+    const { data: userData } = await supabase.auth.getUser();
+    if (!userData?.user) return;
+
+    const { data: room, error: roomError } = await supabase
+      .from('rooms')
+      .select('code, status')
+      .eq('code', code)
+      .maybeSingle();
+
+    if (roomError || !room) {
+      joinMsg.className = 'error';
+      joinMsg.textContent = 'Ce code ne correspond à aucune partie.';
+      return;
+    }
+    if (room.status !== 'WAITING') {
+      joinMsg.className = 'error';
+      joinMsg.textContent = 'Cette partie a déjà commencé ou est terminée.';
+      return;
+    }
+
+    const { error: joinError } = await supabase
+      .from('room_members')
+      .insert({ room_code: code, user_id: userData.user.id });
+
+    if (joinError && joinError.code !== '23505') {
+      joinMsg.className = 'error';
+      joinMsg.textContent = 'Impossible de rejoindre la partie.';
+      return;
+    }
+    window.location.href = `salon.html?code=${code}`;
+  });
+
+  boot();
+</script>
+</body>
+</html>
