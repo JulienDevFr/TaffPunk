@@ -271,18 +271,15 @@
     const { data: userData } = await supabase.auth.getUser();
     if (!userData?.user) return;
 
-    const { data: room, error: roomError } = await supabase
-      .from('rooms')
-      .select('code, status')
-      .eq('code', code)
-      .maybeSingle();
+    const { data: roomStatus, error: roomError } = await supabase
+      .rpc('get_room_status', { p_code: code });
 
-    if (roomError || !room) {
+    if (roomError || !roomStatus) {
       joinMsg.className = 'error';
       joinMsg.textContent = 'Ce code ne correspond à aucune partie.';
       return;
     }
-    if (room.status !== 'WAITING') {
+    if (roomStatus !== 'WAITING') {
       joinMsg.className = 'error';
       joinMsg.textContent = 'Cette partie a déjà commencé ou est terminée.';
       return;
