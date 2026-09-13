@@ -90,11 +90,13 @@
   }
 
   async function loadMembers() {
-    const { data: members } = await supabase
+    const { data: members, error } = await supabase
       .from('room_members')
       .select('user_id, profiles(username)')
       .eq('room_code', code)
       .order('joined_at');
+
+    console.log('DEBUG loadMembers:', members, error);
 
     membersEl.innerHTML = '';
     (members || []).forEach((m) => {
