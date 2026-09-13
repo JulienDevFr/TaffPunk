@@ -109,24 +109,38 @@
     const elapsed = Math.floor((Date.now() - new Date(state.started_at).getTime()) / 1000);
     const remaining = Math.max(0, 30 - elapsed);
 
+    const isSameSong = lastSubmissionId === state.submission_id;
+    const isSameMode = gameArea.dataset.mode === 'playing';
+
+    if (!isSameMode) {
+      // Première fois qu'on affiche cet écran : on construit la structure une fois
+      gameArea.dataset.mode = 'playing';
+      gameArea.innerHTML = `
+        <div class="timer" id="timerEl"></div>
+        <div class="player-frame"><iframe id="ytFrame" allow="autoplay"></iframe></div>
+        <div class="options" id="optionsEl"></div>
+      `;
+    }
+
+    document.getElementById('timerEl').textContent = `${remaining}s`;
+
+    if (!isSameSong) {
+      // Nouvelle chanson : on recharge l'iframe (une seule fois par changement)
+      document.getElementById('ytFrame').src =
+        `https://www.youtube.com/embed/${state.youtube_video_id}?autoplay=1&controls=0`;
+      lastSubmissionId = state.submission_id;
+    }
+
     let optionsHtml = '';
     state.option_user_ids.forEach((uid, i) => {
       const isElim = state.eliminated_user_ids.includes(uid);
       optionsHtml += `<div class="opt ${isElim ? 'eliminated' : ''}">${names[i]}</div>`;
     });
-
-    gameArea.innerHTML = `
-      <div class="timer">${remaining}s</div>
-      <div class="player-frame">
-        <iframe src="https://www.youtube.com/embed/${state.youtube_video_id}?autoplay=1&controls=0"
-          allow="autoplay" ${lastSubmissionId === state.submission_id ? '' : ''}></iframe>
-      </div>
-      <div class="options">${optionsHtml}</div>
-    `;
-    lastSubmissionId = state.submission_id;
+    document.getElementById('optionsEl').innerHTML = optionsHtml;
   }
 
   async function renderSolved(state) {
+    gameArea.dataset.mode = 'solved';
     const names = await usernamesFor([state.target_user_id]);
     gameArea.innerHTML = `
       <div class="reveal-box">
