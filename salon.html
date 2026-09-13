@@ -114,6 +114,15 @@
         { event: '*', schema: 'public', table: 'room_members', filter: `room_code=eq.${code}` },
         () => loadMembers()
       )
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'rooms', filter: `code=eq.${code}` },
+        (payload) => {
+          if (payload.new.status === 'IN_PROGRESS' && !isHost) {
+            window.location.href = `joueur.html?code=${code}`;
+          }
+        }
+      )
       .subscribe();
   }
 
@@ -128,9 +137,7 @@
       msg.textContent = 'Impossible de démarrer la partie.';
       return;
     }
-    // La génération des manches et l'écran de jeu sont la prochaine étape
-    msg.className = 'success';
-    msg.textContent = 'Partie démarrée ! (écran de jeu à venir)';
+    window.location.href = `presentateur.html?code=${code}`;
   });
 
   init();

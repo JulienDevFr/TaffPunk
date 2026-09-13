@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TAF PUNK — Présentateur</title>
+<link rel="stylesheet" href="style.css">
+<style>
+  .wrap { max-width: 700px; }
+  .top-bar { display:flex; justify-content:space-between; align-items:center; margin-bottom:20px; }
+  .chip { background:#1E2140; border:1px solid #282C55; border-radius:999px; padding:6px 14px; font-size:12px; font-weight:700; color:#C9C7DA; }
+  .player-frame { aspect-ratio:16/9; background:#000; border-radius:10px; overflow:hidden; margin-bottom:16px; }
+  .player-frame iframe { width:100%; height:100%; border:0; }
+  .timer { text-align:center; font-size:28px; font-weight:800; color:#FFB238; margin-bottom:16px; }
+  .options { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  .opt { padding:18px; border-radius:8px; font-weight:800; font-size:16px; background:#FFB238; color:#14162B; text-align:center; }
+  .opt.eliminated { background:#3A1E2A; color:#FF5D73; text-decoration:line-through; opacity:0.6; }
+  .reveal-box { text-align:center; padding:30px 0; }
+  .reveal-box .who { font-size:32px; font-weight:800; color:#34C7A8; margin:10px 0; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="top-bar">
+    <div class="chip">Salon <b id="codeChip"></b></div>
+    <div class="chip" id="roundChip">Manche —</div>
+  </div>
+
+  <div id="gameArea"></div>
+  <div id="msg"></div>
+</div>
+
+<script type="module">
+  import { supabase } from './supabase-client.js';
+
+  const code = new URLSearchParams(window.location.search).get('code');
+  document.getElementById('codeChip').textContent = code;
+  const gameArea = document.getElementById('gameArea');
+  const msg = document.getElementById('msg');
+
+  let userId = null;
+  let lastSubmissionId = null;
+  let profileCache = {};
+
+  async function usernamesFor(ids) {
+    const missing = ids.filter((id) => !profileCache[id]);
+    if (missing.length) {
+      const { data } = await supabase.from('profiles').select('id, username').in('id', missing);
+      (data || []).forEach((p) => { profileCache[p.id] = p.username; });
+    }
+    return ids.map((id) => profileCache[id] || '…');
+  }
+
+  async function init() {
+    const { data: userData } = await supabase.auth.getUser();
+    if (!userData?.user) { window.location.href = 'index.html'; return; }
+    userId = userData.user.id;
+
+    const { data: room } = await supabase.from('rooms').select('host_id, status').eq('code', code).maybeSingle();
+    if (!room || room.host_id !== userId) {
+      msg.className = 'error';
+      msg.textContent = "Seul l'hôte accède à cet écran.";
+      return;
+    }
+
+    // Si aucune manche n'existe encore, on démarre la première
+    const { data: state } = await supabase.rpc('get_current_round_state', { p_room_code: code });
+    if (!state) {
+      await tryStartNextRound();
+    }
+
+    tick();
+    setInterval(tick, 1500);
+  }
+
+  async function tryStartNextRound() {
+    const { error } = await supabase.rpc('start_next_round', { p_room_code: code });
+    if (error) {
+      // Plus aucun joueur à deviner -> partie terminée
+      await showFinalScoreboard();
+    }
+  }
+
+  async function tick() {
+    const { data: state } = await supabase.rpc('get_current_round_state', { p_room_code: code });
+    if (!state) return;
+
+    document.getElementById('roundChip').textContent = `Manche ${state.round_index}`;
+
+    if (state.status === 'SOLVED') {
+      await renderSolved(state);
+      return;
+    }
+
+    await renderPlaying(state);
+
+    // Timer géré par l'hôte : si le temps est dépassé, on fait avancer la chanson
+    const elapsed = (Date.now() - new Date(state.started_at).getTime()) / 1000;
+    if (elapsed > 30) {
+      await supabase.rpc('advance_song_if_stale', {
+        p_round_id: state.round_id,
+        p_expected_submission_id: state.submission_id,
+      });
+    }
+  }
+
+  async function renderPlaying(state) {
+    const names = await usernamesFor(state.option_user_ids);
+    const elapsed = Math.floor((Date.now() - new Date(state.started_at).getTime()) / 1000);
+    const remaining = Math.max(0, 30 - elapsed);
+
+    let optionsHtml = '';
+    state.option_user_ids.forEach((uid, i) => {
+      const isElim = state.eliminated_user_ids.includes(uid);
+      optionsHtml += `<div class="opt ${isElim ? 'eliminated' : ''}">${names[i]}</div>`;
+    });
+
+    gameArea.innerHTML = `
+      <div class="timer">${remaining}s</div>
+      <div class="player-frame">
+        <iframe src="https://www.youtube.com/embed/${state.youtube_video_id}?autoplay=1&controls=0"
+          allow="autoplay" ${lastSubmissionId === state.submission_id ? '' : ''}></iframe>
+      </div>
+      <div class="options">${optionsHtml}</div>
+    `;
+    lastSubmissionId = state.submission_id;
+  }
+
+  async function renderSolved(state) {
+    const names = await usernamesFor([state.target_user_id]);
+    gameArea.innerHTML = `
+      <div class="reveal-box">
+        <p class="dim">C'était</p>
+        <p class="who">${names[0]}</p>
+        <button id="nextBtn">Manche suivante</button>
+      </div>
+    `;
+    document.getElementById('nextBtn').addEventListener('click', async () => {
+      document.getElementById('nextBtn').disabled = true;
+      await tryStartNextRound();
+      tick();
+    });
+  }
+
+  async function showFinalScoreboard() {
+    const { data: members } = await supabase
+      .from('room_members')
+      .select('score, profiles(username)')
+      .eq('room_code', code)
+      .order('score', { ascending: false });
+
+    let rows = (members || [])
+      .map((m, i) => `<div class="card" style="display:flex; justify-content:space-between;">
+        <span>#${i + 1} ${m.profiles?.username || '—'}</span><b>${m.score} pts</b>
+      </div>`)
+      .join('');
+
+    gameArea.innerHTML = `
+      <h2 style="text-align:center;">Partie terminée 🎉</h2>
+      ${rows}
+    `;
+  }
+
+  init();
+</script>
+</body>
+</html>
