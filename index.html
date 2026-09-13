@@ -247,7 +247,10 @@
       const { error } = await supabase.from('rooms').insert({ code, host_id: userData.user.id });
       if (!error) {
         // L'hôte rejoint automatiquement sa propre partie en tant que joueur
-        await supabase.from('room_members').insert({ room_code: code, user_id: userData.user.id });
+        const { error: selfJoinError } = await supabase
+          .from('room_members')
+          .insert({ room_code: code, user_id: userData.user.id });
+        console.log('DEBUG auto-join hôte:', selfJoinError);
         window.location.href = `salon.html?code=${code}`;
         created = true;
       } else if (error.code !== '23505') {
